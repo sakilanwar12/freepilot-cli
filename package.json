@@ -13,16 +13,20 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "boxen": "^8.0.1",
     "chalk": "^5.3.0",
+    "cli-highlight": "^2.1.11",
     "commander": "^12.1.0",
     "diff": "^7.0.0",
     "dotenv": "^16.4.5",
     "fast-glob": "^3.3.2",
+    "marked": "^18.0.5",
     "openai": "^4.73.0",
     "ora": "^8.1.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@types/boxen": "^3.0.5",
     "@types/diff": "^6.0.0",
     "@types/node": "^22.7.0",
     "tsup": "^8.3.0",

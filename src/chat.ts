@@ -1,32 +1,29 @@
 import OpenAI from 'openai';
-import readline from 'readline';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import chalk from 'chalk';
 import { execSync } from 'child_process';
 import { type Config } from './config.js';
 import { buildSystemPrompt } from './system.js';
 import { toolDefinitions, executeToolCall } from './ai/tools.js';
-import { printWelcome, printHelp, printError } from './utils/display.js';
+import {
+  printBanner,
+  printHelp,
+  printUserMessage,
+  printAssistantHeader,
+  printAssistantFooter,
+  renderAndWriteStreaming,
+  printToolCall,
+  printToolResult,
+  printError,
+  printSuccess,
+  clearLine,
+  promptUser,
+  closePrompt,
+} from './ui/chat.js';
 import { estimateTokens, formatCost } from './utils/tokens.js';
 import { isGitRepository } from './tools/git.js';
 import { setAutoAccept } from './tools/diff.js';
 import fg from 'fast-glob';
-
-function createReadline(): readline.Interface {
-  return readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    prompt: '',
-  });
-}
-
-function promptUser(rl: readline.Interface): Promise<string> {
-  return new Promise((resolve) => {
-    rl.question(chalk.cyan('\nYou > '), (input) => {
-      resolve(input.trim());
-    });
-  });
-}
 
 function getGitStatusSummary(): string {
   try {
@@ -131,20 +128,13 @@ export async function startChat(config: Config): Promise<void> {
     { role: 'system', content: buildSystemPrompt(context) },
   ];
 
-  const rl = createReadline();
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
 
-  printWelcome();
-  console.log(chalk.dim(`  Provider: ${config.provider} | Model: ${config.model}`));
-  console.log(chalk.dim(`  Cwd: ${context.cwd}`));
-  if (gitStatus) {
-    console.log(chalk.dim(`  Git: ${gitStatus}`));
-  }
-  console.log();
+  printBanner(config.provider, config.model, context.cwd, gitStatus || undefined);
 
   while (true) {
-    const input = await promptUser(rl);
+    const input = await promptUser();
 
     if (!input) continue;
 
@@ -155,8 +145,8 @@ export async function startChat(config: Config): Promise<void> {
       switch (cmd) {
         case '/exit':
         case '/quit':
-          console.log(chalk.yellow('\nGoodbye!'));
-          rl.close();
+          printSuccess('Goodbye!');
+          closePrompt();
           return;
 
         case '/help':
@@ -166,31 +156,31 @@ export async function startChat(config: Config): Promise<void> {
         case '/clear':
           messages.length = 0;
           messages.push({ role: 'system', content: buildSystemPrompt(context) });
-          console.log(chalk.green('\nConversation history cleared.'));
+          printSuccess('Conversation history cleared.');
           continue;
 
         case '/tokens':
           console.log(
-            chalk.cyan(
-              `\nInput tokens: ~${totalInputTokens} | Output tokens: ~${totalOutputTokens} | Cost: ${formatCost(totalInputTokens, totalOutputTokens, config.model)}`
-            )
+            `\n  ${chalk.cyan('ℹ')} Input tokens: ~${totalInputTokens} | Output tokens: ~${totalOutputTokens} | Cost: ${formatCost(totalInputTokens, totalOutputTokens, config.model)}`
           );
           continue;
 
         case '/model':
           if (parts[1]) {
             config.model = parts[1];
-            console.log(chalk.green(`\nSwitched to model: ${config.model}`));
+            printSuccess(`Switched to model: ${config.model}`);
           } else {
-            console.log(chalk.yellow(`\nCurrent model: ${config.model}`));
+            console.log(`\n  Current model: ${chalk.white(config.model)}`);
           }
           continue;
 
         default:
-          console.log(chalk.red(`\nUnknown command: ${cmd}. Type /help for available commands.`));
+          printError(`Unknown command: ${cmd}. Type /help for available commands.`);
           continue;
       }
     }
+
+    printUserMessage(input);
 
     messages.push({ role: 'user', content: input });
     totalInputTokens += estimateTokens(input);
@@ -201,12 +191,9 @@ export async function startChat(config: Config): Promise<void> {
     while (toolCallDepth < MAX_TOOL_DEPTH) {
       toolCallDepth++;
 
-      const spinner = { frames: ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'], interval: 80 };
-      let spinnerIndex = 0;
       const spinnerTimer = setInterval(() => {
-        process.stdout.write(`\r${chalk.dim(spinner.frames[spinnerIndex % spinner.frames.length])} Thinking...`);
-        spinnerIndex++;
-      }, spinner.interval);
+        process.stdout.write(`\r${chalk.dim('  ⏳ Thinking...')}`);
+      }, 150);
 
       let gotResponse = false;
 
@@ -215,20 +202,28 @@ export async function startChat(config: Config): Promise<void> {
         let toolCalls: any[] | null = null;
         let error: string | null = null;
         let content = '';
+        let startedStreaming = false;
 
         for await (const event of streamGen) {
           if (!gotResponse) {
             clearInterval(spinnerTimer);
-            process.stdout.write('\r\x1b[K');
+            clearLine();
             gotResponse = true;
           }
 
           switch (event.type) {
             case 'content':
+              if (!startedStreaming) {
+                startedStreaming = true;
+                printAssistantHeader();
+              }
               content += event.text;
-              process.stdout.write(event.text);
+              renderAndWriteStreaming(event.text);
               break;
             case 'tool_calls':
+              if (startedStreaming) {
+                printAssistantFooter();
+              }
               toolCalls = event.toolCalls;
               break;
             case 'error':
@@ -239,7 +234,7 @@ export async function startChat(config: Config): Promise<void> {
 
         if (!gotResponse) {
           clearInterval(spinnerTimer);
-          process.stdout.write('\r\x1b[K');
+          clearLine();
           gotResponse = true;
         }
 
@@ -249,8 +244,6 @@ export async function startChat(config: Config): Promise<void> {
         }
 
         if (toolCalls && toolCalls.length > 0) {
-          process.stdout.write('\n');
-
           const assistantMessage: ChatCompletionMessageParam = {
             role: 'assistant',
             content: content || null,
@@ -268,11 +261,11 @@ export async function startChat(config: Config): Promise<void> {
           for (const tc of toolCalls) {
             const toolName = tc.function.name;
             const displayName = toolName === 'search_replace' ? 'edit' : toolName;
-            process.stdout.write(chalk.dim(`\n⚡ ${displayName}... `));
+            printToolCall(displayName);
 
             try {
               const result = await executeToolCall(toolName, tc.function.arguments);
-              console.log(chalk.dim('done'));
+              printToolResult(true);
               totalInputTokens += estimateTokens(result);
 
               messages.push({
@@ -281,7 +274,7 @@ export async function startChat(config: Config): Promise<void> {
                 content: result,
               } as ChatCompletionMessageParam);
             } catch (execError: any) {
-              console.log(chalk.red('failed'));
+              printToolResult(false);
               messages.push({
                 role: 'tool',
                 tool_call_id: tc.id,
@@ -293,8 +286,8 @@ export async function startChat(config: Config): Promise<void> {
           continue;
         }
 
-        if (content) {
-          process.stdout.write('\n');
+        if (startedStreaming) {
+          printAssistantFooter();
         }
 
         messages.push({ role: 'assistant', content });
@@ -303,21 +296,21 @@ export async function startChat(config: Config): Promise<void> {
         if (isGitRepository()) {
           const status = getGitStatusSummary();
           if (status) {
-            console.log(chalk.dim(`\n  Git: ${status}`));
+            console.log(`  ${chalk.dim('Git:')} ${chalk.yellow(status)}`);
           }
         }
 
         break;
       } catch (error: any) {
         clearInterval(spinnerTimer);
-        process.stdout.write('\r\x1b[K');
+        clearLine();
         printError('Request failed', error.message);
         break;
       }
     }
 
     if (toolCallDepth >= MAX_TOOL_DEPTH) {
-      console.log(chalk.yellow('\nWarning: Reached maximum tool call depth.'));
+      console.log(`  ${chalk.yellow('⚠')} Warning: Reached maximum tool call depth.`);
     }
 
     const MAX_HISTORY = 60;

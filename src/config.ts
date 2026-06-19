@@ -6,11 +6,11 @@ import fs from 'fs';
 
 dotenvConfig();
 
-export type Provider = 'ollama' | 'deepseek' | 'openai';
+export type Provider = 'ollama' | 'deepseek' | 'openai' | 'openrouter';
 
 const envSchema = z.object({
   OPENAI_API_KEY: z.string().optional(),
-  FREEPILOT_PROVIDER: z.enum(['ollama', 'deepseek', 'openai']).default('ollama'),
+  FREEPILOT_PROVIDER: z.enum(['ollama', 'deepseek', 'openai', 'openrouter']).default('openrouter'),
   FREEPILOT_MODEL: z.string().optional(),
   FREEPILOT_MAX_TOKENS: z.coerce.number().default(4096),
   FREEPILOT_TEMPERATURE: z.coerce.number().default(0.7),
@@ -22,12 +22,17 @@ const envSchema = z.object({
   // Ollama config
   OLLAMA_BASE_URL: z.string().default('http://localhost:11434/v1'),
   OLLAMA_MODEL: z.string().default('codellama'),
+
+  // OpenRouter config
+  OPENROUTER_API_KEY: z.string().optional(),
+  OPENROUTER_BASE_URL: z.string().default('https://openrouter.ai/api/v1'),
 });
 
 const DEFAULT_MODELS: Record<Provider, string> = {
   ollama: 'codellama',
   deepseek: 'deepseek-chat',
   openai: 'gpt-4o-mini',
+  openrouter: 'deepseek/deepseek-chat-v3:free',
 };
 
 function loadEnvFile(): void {
@@ -62,6 +67,8 @@ function getBaseURL(provider: Provider, env: Record<string, string | undefined>)
       return 'https://api.deepseek.com/v1';
     case 'openai':
       return 'https://api.openai.com/v1';
+    case 'openrouter':
+      return env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
   }
 }
 
@@ -85,6 +92,7 @@ function validateConfig(parsed: z.SafeParseReturnType<any, any>, provider: Provi
     console.error('Configuration error:');
     console.error('  OPENAI_API_KEY is required when using OpenAI provider.');
     console.error('\nSet OPENAI_API_KEY in your environment or .env file, or use a different provider:');
+    console.error('  FREEPILOT_PROVIDER=openrouter  (free models with free API key)');
     console.error('  FREEPILOT_PROVIDER=ollama  (local models, no API key needed)');
     console.error('  FREEPILOT_PROVIDER=deepseek  (free API tier)');
     process.exit(1);
@@ -96,13 +104,20 @@ function validateConfig(parsed: z.SafeParseReturnType<any, any>, provider: Provi
     console.error('\nGet your free API key at https://platform.deepseek.com/api_keys');
     process.exit(1);
   }
+
+  if (provider === 'openrouter' && !parsed.data.OPENROUTER_API_KEY) {
+    console.error('Configuration error:');
+    console.error('  OPENROUTER_API_KEY is required when using OpenRouter provider.');
+    console.error('\nGet your free API key at https://openrouter.ai/keys');
+    process.exit(1);
+  }
 }
 
 export function loadConfig(overrides?: Partial<Config>): Config {
   loadEnvFile();
 
   const env = process.env as Record<string, string | undefined>;
-  const provider: Provider = (overrides?.provider as Provider) || env.FREEPILOT_PROVIDER || 'ollama';
+  const provider: Provider = (overrides?.provider as Provider) || env.FREEPILOT_PROVIDER || 'openrouter';
 
   const parsed = envSchema.safeParse(process.env);
   validateConfig(parsed, provider);
@@ -110,6 +125,7 @@ export function loadConfig(overrides?: Partial<Config>): Config {
   const data = parsed.data!;
   const apiKey = provider === 'openai' ? data.OPENAI_API_KEY
     : provider === 'deepseek' ? env.DEEPSEEK_API_KEY
+    : provider === 'openrouter' ? env.OPENROUTER_API_KEY
     : 'ollama';
 
   return {

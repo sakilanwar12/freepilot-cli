@@ -18,8 +18,8 @@ export function runCLI(): void {
   program
     .command('chat')
     .description('Start an interactive coding session')
-    .option('-m, --model <model>', 'AI model to use (e.g., gpt-4o-mini, deepseek-chat, codellama)')
-    .option('-p, --provider <provider>', 'AI provider: ollama, deepseek, openai')
+    .option('-m, --model <model>', 'AI model (default: deepseek/deepseek-chat-v3:free). Options: qwen/qwen-2.5-coder-32b-instruct:free, deepseek/deepseek-r1:free, meta-llama/llama-3.3-70b-instruct:free, openrouter/free')
+    .option('-p, --provider <provider>', 'AI provider: openrouter (default), ollama, deepseek, openai')
     .option('-y, --yes', 'Auto-accept all file changes (non-interactive mode)')
     .action(async (options) => {
       const config = loadConfig({
@@ -33,9 +33,9 @@ export function runCLI(): void {
   program
     .command('init')
     .description('Create a .env configuration file')
-    .option('-p, --provider <provider>', 'Provider: ollama, deepseek, openai (default: ollama)')
+    .option('-p, --provider <provider>', 'Provider: openrouter (default), ollama, deepseek, openai')
     .action(async (options) => {
-      const provider = options.provider || 'ollama';
+      const provider = options.provider || 'openrouter';
       const envPath = path.join(process.cwd(), '.env');
       if (fs.existsSync(envPath)) {
         console.log(chalk.yellow('.env file already exists.'));
@@ -62,6 +62,22 @@ FREEPILOT_PROVIDER=${provider}
         }
         content += `OPENAI_API_KEY=${apiKey.trim()}
 FREEPILOT_MODEL=gpt-4o-mini
+`;
+      } else if (provider === 'openrouter') {
+        const { createInterface } = await import('readline');
+        const apiKey = await new Promise<string>((resolve) => {
+          const rl = createInterface({ input: process.stdin, output: process.stdout });
+          rl.question(chalk.cyan('Enter your OpenRouter API key (free at https://openrouter.ai/keys): '), (answer) => {
+            rl.close();
+            resolve(answer);
+          });
+        });
+        if (!apiKey.trim()) {
+          console.log(chalk.red('API key is required for OpenRouter provider.'));
+          return;
+        }
+        content += `OPENROUTER_API_KEY=${apiKey.trim()}
+FREEPILOT_MODEL=google/gemini-2.0-flash-exp:free
 `;
       } else if (provider === 'deepseek') {
         const { createInterface } = await import('readline');
