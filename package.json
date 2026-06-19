@@ -3,16 +3,44 @@
   "version": "1.0.0",
   "description": "Autonomous AI coding agent for the terminal",
   "type": "module",
+  "main": "dist/index.js",
+  "types": "./dist/index.d.ts",
   "bin": {
-    "freepilot": "./dist/index.js"
+    "freepilot": "dist/index.js"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsup",
-    "prepare": "pnpm run build && npm link",
+    "prepublishOnly": "npm run build",
+    "prepare": "npm run build",
     "dev": "tsup --watch",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit"
   },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/anomalyco/freepilot-cli.git"
+  },
+  "homepage": "https://github.com/anomalyco/freepilot-cli#readme",
+  "bugs": {
+    "url": "https://github.com/anomalyco/freepilot-cli/issues"
+  },
+  "keywords": [
+    "ai",
+    "cli",
+    "coding-agent",
+    "autonomous",
+    "terminal"
+  ],
+  "author": "Sakil Anwar <sakil@anwar.xyz>",
+  "license": "MIT",
   "dependencies": {
     "boxen": "^8.0.1",
     "chalk": "^5.3.0",
