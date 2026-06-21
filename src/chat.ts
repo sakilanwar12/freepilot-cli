@@ -174,22 +174,29 @@ async function* streamCompletion(
     });
 
     let content = '';
+    let gotContent = false;
     const toolCallAccumulators = new Map<number, { id: string; type: 'function'; function: { name: string; arguments: string } }>();
 
-    for await (const chunk of stream) {
-      const delta = chunk.choices[0]?.delta;
-      if (delta?.content) { content += delta.content; yield { type: 'content', text: delta.content }; }
-      if (delta?.tool_calls) {
-        for (const tcDelta of delta.tool_calls) {
-          const idx = tcDelta.index;
-          if (!toolCallAccumulators.has(idx)) {
-            toolCallAccumulators.set(idx, { id: '', type: 'function', function: { name: '', arguments: '' } });
+    try {
+      for await (const chunk of stream) {
+        const delta = chunk.choices[0]?.delta;
+        if (delta?.content) { content += delta.content; gotContent = true; yield { type: 'content', text: delta.content }; }
+        if (delta?.tool_calls) {
+          for (const tcDelta of delta.tool_calls) {
+            const idx = tcDelta.index;
+            if (!toolCallAccumulators.has(idx)) {
+              toolCallAccumulators.set(idx, { id: '', type: 'function', function: { name: '', arguments: '' } });
+            }
+            const acc = toolCallAccumulators.get(idx)!;
+            if (tcDelta.id) acc.id = tcDelta.id;
+            if (tcDelta.function?.name) acc.function.name += tcDelta.function.name;
+            if (tcDelta.function?.arguments) acc.function.arguments += tcDelta.function.arguments;
           }
-          const acc = toolCallAccumulators.get(idx)!;
-          if (tcDelta.id) acc.id = tcDelta.id;
-          if (tcDelta.function?.name) acc.function.name += tcDelta.function.name;
-          if (tcDelta.function?.arguments) acc.function.arguments += tcDelta.function.arguments;
         }
+      }
+    } catch (err: any) {
+      if (err?.message !== 'Premature close' || (!gotContent && toolCallAccumulators.size === 0)) {
+        throw err;
       }
     }
 

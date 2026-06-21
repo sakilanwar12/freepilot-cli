@@ -27,6 +27,40 @@ function highlightCode(code: string, lang?: string): string {
   }
 }
 
+// ── Word Wrapping ──
+function wordWrap(text: string, maxWidth: number): string[] {
+  if (!text || maxWidth <= 0) return [text];
+  const words = text.split(' ');
+  const lines: string[] = [];
+  let current = '';
+
+  for (const word of words) {
+    // Check if word itself is longer than maxWidth (force break)
+    if (word.length > maxWidth) {
+      if (current) {
+        lines.push(current);
+        current = '';
+      }
+      // Break the long word
+      for (let i = 0; i < word.length; i += maxWidth) {
+        lines.push(word.slice(i, i + maxWidth));
+      }
+      continue;
+    }
+
+    const test = current ? current + ' ' + word : word;
+    if (test.length > maxWidth) {
+      if (current) lines.push(current);
+      current = word;
+    } else {
+      current = test;
+    }
+  }
+
+  if (current) lines.push(current);
+  return lines;
+}
+
 // ── Inline Markdown ──
 function renderInline(text: string): string {
   return text

@@ -51,6 +51,40 @@ function gradientText(text: string, colors: string[]): string {
   return result;
 }
 
+// Viewport truncation: scroll long lines horizontally so cursor stays visible
+function viewportLine(line: string, cursorInLine: number | undefined, maxLen: number): { text: string; cursorInViewport: number } {
+  if (line.length <= maxLen) {
+    return { text: line, cursorInViewport: cursorInLine ?? 0 };
+  }
+
+  // Show a window around the cursor (40% before, 60% after)
+  const before = Math.min(Math.floor(maxLen * 0.35), cursorInLine ?? 0);
+  let start = (cursorInLine !== undefined) ? cursorInLine - before : 0;
+  let end = start + maxLen;
+
+  if (end > line.length) {
+    end = line.length;
+    start = end - maxLen;
+  }
+  if (start < 0) {
+    start = 0;
+    end = maxLen;
+  }
+
+  let result = line.slice(start, end);
+  let cursorOffset = (cursorInLine !== undefined) ? cursorInLine - start : 0;
+
+  if (start > 0) {
+    result = '…' + result.slice(1);
+    cursorOffset = Math.max(0, cursorOffset - 1);
+  }
+  if (end < line.length) {
+    result = result.slice(0, -1) + '…';
+  }
+
+  return { text: result, cursorInViewport: cursorOffset };
+}
+
 // ════════════════════════════════════════════════════════
 // ██  TERMINAL BACKGROUND CONTROL                      ██
 // ════════════════════════════════════════════════════════
@@ -321,6 +355,120 @@ export function stopThinkingSpinner(interval?: ReturnType<typeof setInterval>): 
 }
 
 // ════════════════════════════════════════════════════════
+// ██  INTERACTIVE CONFIRM BUTTONS — Accept / Reject   ██
+// ════════════════════════════════════════════════════════
+
+const CONFIRM_BG = chalk.bgHex('#2c313c');
+const CONFIRM_ACCENT = chalk.hex('#61afef');
+const CONFIRM_GREEN = chalk.hex('#98c379');
+const CONFIRM_RED = chalk.hex('#e06c75');
+const CONFIRM_MUTED = chalk.hex('#5c6370');
+
+let confirmResolve: ((value: boolean) => void) | null = null;
+let confirmKeyHandler: ((data: Buffer) => void) | null = null;
+
+function renderConfirmButtons(question: string): string[] {
+  const cols = process.stdout.columns || 80;
+  const W = Math.max(40, Math.min(90, cols - 6));
+  const innerW = W - 2;
+  const lines: string[] = [];
+
+  const bg = CONFIRM_BG;
+  const borderClr = chalk.hex('#4b5263');
+  const leftBorder = chalk.hex('#61afef');
+
+  const boxRow = (content: string) => {
+    const visLen = stripAnsi(content).length;
+    const padding = Math.max(0, innerW - visLen);
+    return leftBorder('│') + bg(content + ' '.repeat(padding)) + borderClr('│');
+  };
+
+  // Top border
+  lines.push(leftBorder('┌') + borderClr('─'.repeat(innerW)) + borderClr('┐'));
+
+  // Question line
+  lines.push(boxRow(`  ${chalk.hex('#e2e8f0').bold('Confirm')}`));
+  lines.push(boxRow(`  ${chalk.hex('#e2e8f0')(question)}`));
+  lines.push(boxRow(`  ${borderClr('─'.repeat(innerW - 4))}`));
+
+  // Buttons
+  const acceptBtn = `  ${CONFIRM_GREEN('✓ Accept')}  `;
+  const rejectBtn = `  ${CONFIRM_RED('✗ Reject')}  `;
+  const hint = `  ${CONFIRM_MUTED('(Enter = accept, Esc = reject)')}`;
+
+  lines.push(boxRow(`  ${acceptBtn}    ${rejectBtn}`));
+  lines.push(boxRow(`  ${hint}`));
+
+  // Bottom border
+  lines.push(leftBorder('└') + borderClr('─'.repeat(innerW)) + borderClr('┘'));
+
+  return lines.map(line => '  ' + line);
+}
+
+export function showConfirmButtons(question: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    confirmResolve = resolve;
+    const input = process.stdin;
+    const output = process.stdout;
+
+    if (input.isTTY) input.setRawMode(true);
+    input.resume();
+
+    const buttons = renderConfirmButtons(question);
+    const buttonCount = buttons.length;
+
+    // Clear previous output area
+    for (let i = 0; i < buttonCount; i++) {
+      process.stdout.write('\x1b[K\n');
+    }
+    // Move cursor back up
+    for (let i = 0; i < buttonCount; i++) {
+      process.stdout.write('\x1b[A');
+    }
+
+    // Write buttons
+    for (const line of buttons) {
+      output.write(line + '\n');
+    }
+
+    // Move cursor back to first line
+    for (let i = 0; i < buttonCount; i++) {
+      output.write('\x1b[A');
+    }
+
+    const cleanup = () => {
+      if (input.isTTY) input.setRawMode(false);
+      input.pause();
+      if (confirmKeyHandler) {
+        input.removeListener('data', confirmKeyHandler);
+        confirmKeyHandler = null;
+      }
+      confirmResolve = null;
+    };
+
+    confirmKeyHandler = (data: Buffer) => {
+      const str = data.toString('utf-8');
+      for (const ch of str) {
+        if (ch === '\r' || ch === '\n' || ch === ' ') {
+          // Accept
+          if (confirmResolve) confirmResolve(true);
+          cleanup();
+          return;
+        }
+        if (ch === '\x1b' || ch === 'n' || ch === 'N') {
+          // Reject
+          if (confirmResolve) confirmResolve(false);
+          cleanup();
+          return;
+        }
+      }
+    };
+
+    input.on('data', confirmKeyHandler);
+  });
+}
+
+// ════════════════════════════════════════════════════════
 // ██  STATUS MESSAGES                                  ██
 // ════════════════════════════════════════════════════════
 
@@ -452,6 +600,7 @@ function renderInputLine(
 
   // 3. Input buffer or placeholder
   const empty = state.buffer.length === 0 && !state.imageFile && !pasteSummary;
+  const maxTextLen = innerW - 2; // Available text width after '  ' prefix inside boxRow
   
   for (let i = 0; i < displayLines.length; i++) {
     const line = displayLines[i];
@@ -463,15 +612,21 @@ function renderInputLine(
       cursorCol = 6;
       lines.push(boxRow(`  ${cursorChar} ${MUTED(placeholder)}`));
     } else if (!empty && i === lineIdx) {
-      const before = line.slice(0, colIdx);
-      const at = line[colIdx] || ' ';
-      const after = line.slice(colIdx + 1);
+      // Apply viewport truncation for the line with cursor
+      const vp = viewportLine(line, colIdx, maxTextLen);
+      const truncatedLine = vp.text;
+      const vpCursor = vp.cursorInViewport;
+      const before = truncatedLine.slice(0, vpCursor);
+      const at = truncatedLine[vpCursor] || ' ';
+      const after = truncatedLine.slice(vpCursor + 1);
       const cursorChar = chalk.bgHex('#abb2bf').hex('#282c34')(at);
       cursorLineIdx = currentLineIdxInBox;
       cursorCol = 6 + stripAnsi(before).length;
       lines.push(boxRow(`  ${before}${cursorChar}${after}`));
     } else {
-      lines.push(boxRow(`  ${line}`));
+      // Apply viewport truncation for lines without cursor (show start)
+      const truncated = line.length <= maxTextLen ? line : line.slice(0, maxTextLen - 1) + '…';
+      lines.push(boxRow(`  ${truncated}`));
     }
   }
 

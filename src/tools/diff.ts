@@ -1,5 +1,6 @@
 import { createTwoFilesPatch } from 'diff';
-import { displayDiff, askConfirm } from '../utils/display.js';
+import { showConfirmButtons } from '../ui/chat.js';
+import { displayDiff } from '../utils/display.js';
 
 let autoAcceptEnabled = false;
 
@@ -25,5 +26,5 @@ export async function showDiffAndConfirm(
     return true;
   }
 
-  return await askConfirm('Apply these changes?');
+  return await showConfirmButtons('Apply these changes?');
 }
