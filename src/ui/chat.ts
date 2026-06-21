@@ -116,21 +116,18 @@ export function printBanner(provider: string, model: string, cwd: string, gitSta
   const cols = process.stdout.columns || 80;
   console.log();
 
-  // ASCII logo with gradient
+  // ASCII logo — solid clean color for readability
+  const logoColor = chalk.hex('#61afef');
   for (const line of LOGO_LINES) {
-    const centered = centerText(gradientText(line, GRADIENT_COLORS), cols);
+    const centered = centerText(logoColor(line), cols);
     console.log(bgFill(centered));
   }
 
   console.log(bgFill(''));
 
-  // Gradient separator
+  // Clean separator line
   const sepLen = Math.min(60, cols - 4);
-  let sep = '  ';
-  for (let i = 0; i < sepLen; i++) {
-    const colorIdx = Math.floor((i / sepLen) * GRADIENT_COLORS.length);
-    sep += chalk.hex(GRADIENT_COLORS[colorIdx])('━');
-  }
+  const sep = '  ' + chalk.hex('#4b5263')('━'.repeat(sepLen));
   console.log(bgFill(sep));
   console.log(bgFill(''));
 
